@@ -53,24 +53,32 @@ def compute_edf_schedule(jobs):
         schedule.append(idx)
     return schedule
 
-def generate_scheduling_prompt(jobs):
+def generate_scheduling_prompt(jobs, template_type):
     """
-    產生排程問題的 prompt，格式參照對話式指令格式
+    產生排程問題的 prompt，支援 base 和 qwen-instruct 格式
     """
     jobs_description = [(i, p, d) for i, (p, d) in enumerate(jobs)]
-    prompt = f"""<|im_start|>system
-You are a helpful assistant. You first think about the reasoning process in your mind and then provide the user with the answer.<|im_end|>
-
-<|im_start|>user
-Using the given jobs {jobs_description} (each as (job_id, processing_time, deadline)), create a feasible schedule that completes all jobs before their deadlines using Earliest Deadline First (EDF). 
+    if template_type == 'base':
+        """This works for any base model"""
+        prompt = f"""A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first thinks about the reasoning process in the mind and then provides the user with the answer.
+User: Using the given jobs {jobs_description} (each as (job_id, processing_time, deadline)), create a feasible schedule that completes all jobs before their deadlines using Earliest Deadline First (EDF). 
 If no feasible schedule exists, return "No feasible schedule". 
 
 Show your work in <think> </think> tags. 
-And return the final answer of job_id in <answer> </answer> tags, for example <answer> [0, 1, 2] </answer>.<|im_end|>
-
-<|im_start|>assistant
-Let me solve this step by step.
+And return the final answer of job_id in <answer> </answer> tags, for example <answer> [0, 1, 2] </answer>.
+Assistant: Let me solve this step by step.
 <think>"""
+    
+    elif template_type == 'qwen-instruct':
+        """This works for Qwen Instruct Models"""
+        prompt = f"""<|im_start|>system\nYou are a helpful assistant. You first think about the reasoning process in your mind and then provide the user with the answer.<|im_end|>\n
+<|im_start|>user\nUsing the given jobs {jobs_description} (each as (processing_time, deadline)), create a feasible schedule that completes all jobs before their deadlines using Earliest Deadline First (EDF). 
+If no feasible schedule exists, return "No feasible schedule". 
+
+Show your work in <think> </think> tags. 
+And return the final answer of job_id in <answer> </answer> tags, for example <answer> [0, 1, 2] </answer>.<|im_end|>\n
+<|im_start|>assistant\nLet me solve this step by step.\n<think>"""
+
     return prompt
 
 def gen_scheduling_dataset(num_samples: int, num_jobs: int = 10, seed_value: int = 42):
@@ -94,9 +102,9 @@ def gen_scheduling_dataset(num_samples: int, num_jobs: int = 10, seed_value: int
         })
     return samples
 
-def make_map_fn(split):
+def make_map_fn(split, template_type='base'):
     def process_fn(example, idx):
-        prompt = generate_scheduling_prompt(example['jobs'])
+        prompt = generate_scheduling_prompt(example['jobs'], template_type)
         solution = {
             "jobs": example['jobs'],
             "schedule": example['schedule']
@@ -127,8 +135,9 @@ if __name__ == '__main__':
     parser.add_argument('--num_samples', type=int, default=10000, help="總樣本數")
     parser.add_argument('--num_jobs', type=int, default=10, help="每筆樣本中的作業數量")
     parser.add_argument('--train_size', type=int, default=8000, help="訓練集大小")
-    parser.add_argument('--test_size', type=int, default=2000, help="測試集大小")
+    parser.add_argument('--test_size', type=int, default=2000, help="測試集大小") 
     parser.add_argument('--seed_value', type=int, default=42, help="隨機種子")
+    parser.add_argument('--template_type', type=str, default='base', choices=['base', 'qwen-instruct'], help="提示詞模板類型")
     
     args = parser.parse_args()
     
@@ -144,8 +153,8 @@ if __name__ == '__main__':
     test_dataset = raw_dataset.select(range(args.train_size, args.train_size + args.test_size))
     
     # 轉換為最終格式
-    train_dataset = train_dataset.map(function=make_map_fn('train'), with_indices=True)
-    test_dataset = test_dataset.map(function=make_map_fn('test'), with_indices=True)
+    train_dataset = train_dataset.map(function=make_map_fn('train', args.template_type), with_indices=True)
+    test_dataset = test_dataset.map(function=make_map_fn('test', args.template_type), with_indices=True)
     
     local_dir = os.path.expanduser(args.local_dir)
     os.makedirs(local_dir, exist_ok=True)
